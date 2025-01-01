@@ -1,4 +1,12 @@
-requests
 sentence-transformers
-streamlit
+flask
+python-dotenv
+requests
+langchain
 openai
+pinecone-client
+scikit-learn
+numpy
+pytest
+pytest-flask
+gunicorn
