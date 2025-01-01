@@ -1,4 +1,0 @@
-requests
-sentence-transformers
-streamlit
-openai
