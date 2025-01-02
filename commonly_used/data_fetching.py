@@ -164,27 +164,27 @@ def fetch_full_file_content(owner, repo, file_path, oauth_token):
 
 def fetch_pull_request_details(owner, repo, pr_number, oauth_token):
     """
-    Fetch detailed information about a specific pull request, including full file content and diffs.
+    Fetch detailed information about a specific pull request, including diffs and full file content.
     """
     pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
     headers = {"Authorization": f"token {oauth_token}"}
+    
+    # Fetch pull request details
     pr_response = requests.get(pr_url, headers=headers)
-
     if pr_response.status_code != 200:
         raise Exception(f"GitHub API error: {pr_response.json().get('message')}")
 
     pr_data = pr_response.json()
 
-    # Fetch diffs
+    # Fetch modified files in the pull request
     files_url = pr_data["url"] + "/files"
     files_response = requests.get(files_url, headers=headers)
-
     if files_response.status_code != 200:
         raise Exception(f"GitHub API error: {files_response.json().get('message')}")
 
     files_data = files_response.json()
 
-    # Fetch full file content for each modified file
+    # Fetch full content for each modified file
     for file in files_data:
         file_path = file["filename"]
         file["full_content"] = fetch_full_file_content(owner, repo, file_path, oauth_token)
@@ -206,9 +206,10 @@ def extract_referenced_files(file_content):
 
 
 from langchain_community.llms import OpenAI
+
 def analyze_code_changes(files, owner, repo, oauth_token):
     """
-    Analyze code changes using OpenAI, handling large prompts by truncating or summarizing.
+    Analyze code changes using OpenAI, combining diffs and full file content.
     """
     openai = OpenAI(api_key=OPEN_AI_KEY)
     results = []
@@ -218,51 +219,37 @@ def analyze_code_changes(files, owner, repo, oauth_token):
         full_content = file.get("full_content", "")
         changes = file.get("patch", "")
 
-        if full_content is None:
+        if not full_content:
             print(f"Skipping {filename} due to missing content.")
             continue
 
-        # Summarize large files before analysis
-        if len(full_content) > 3500:
-            print(f"Summarizing large file: {filename}")
-            full_content = summarize_large_file(full_content, filename)
-
-        if len(changes) > 500:
-            changes = changes[:500]
-            
-        # Limit tokens by truncating if necessary
-        max_prompt_length = 3500  # Leave space for completion tokens
         prompt = f"""
-        You are a senior software engineer reviewing the following changes to a file in a repository. 
-        Provide detailed feedback for the developer to improve their code quality and ensure adherence 
-        to best practices.
-
-        File Name: {filename}
+        You are a senior software engineer analyzing a pull request in a GitHub repository.
+        File: {filename}
 
         Full File Content:
-        {full_content[:max_prompt_length]}
+        {full_content[:3000]}
 
-        Code Changes:
-        {changes[:max_prompt_length - len(full_content)]}
+        Diff (Changes Made):
+        {changes[:1500]}
 
-        Review Instructions:
-        1. Analyze the purpose of the changes made in this file.
-        2. Identify potential issues such as bugs, performance bottlenecks, or security vulnerabilities.
-        3. Suggest improvements or refactoring opportunities to make the code more efficient and maintainable.
-        4. Check if the code adheres to standard conventions (e.g., PEP-8 for Python or equivalent for other languages).
-        5. Provide high-level feedback about the overall changes and their impact on the project.
-
-        Be concise and use bullet points for your suggestions.
+        Provide:
+        1. A summary of what the changes achieve.
+        2. Potential issues (bugs, security, performance).
+        3. Suggestions for improvement.
+        4. High-level impact on the repository.
         """
         try:
-            response = openai.generate([prompt], max_tokens=500)  # Adjust for longer responses
-            completion = response.generations[0][0].text.strip()
-            results.append({"file": filename, "analysis": completion})
+            response = openai.generate([prompt], max_tokens=500)
+            results.append({
+                "file": filename,
+                "analysis": response.generations[0][0].text.strip()
+            })
         except Exception as e:
             results.append({"file": filename, "error": str(e)})
 
-
     return results
+
 
 
 def summarize_large_file(file_content, filename):
