@@ -1,5 +1,4 @@
 from flask import Flask
-from flask import session
 
 def create_app():
     """
@@ -11,5 +10,8 @@ def create_app():
     # Register Blueprints
     from .routes import main
     app.register_blueprint(main)
+
+    from .pull_review_routes import pull_review  # Import the Blueprint
+    app.register_blueprint(pull_review)  # Register the Blueprint
 
     return app

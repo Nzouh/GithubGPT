@@ -1,5 +1,17 @@
 import requests
 import base64
+from dotenv import load_dotenv
+import os
+# Load environment variables
+load_dotenv()
+
+# Sanitize environment variables
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "").strip()
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "").strip()
+GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "").rstrip('/').strip()
+PINECONE_KEY = os.getenv("PINECONE_KEY", "").strip()
+PINECONE_INDEX_HOST = os.getenv("PINECONE_INDEX_HOST", "").rstrip('/').strip()
+OPEN_AI_KEY = os.getenv("OPEN_AI_KEY", "").strip()
 
 def get_auth_headers(oauth_token):
     """
@@ -95,3 +107,190 @@ def fetch_coding_files(owner, repo, branch, oauth_token, extensions=None):
     except Exception as e:
         print(f"Error fetching coding files: {e}")
         return []
+
+def parse_github_url(url):
+    """
+    Parse a GitHub repository URL and extract the owner and repo.
+    """
+    import re
+    pattern = r"https://github\.com/([^/]+)/([^/]+)"
+    match = re.match(pattern, url)
+    if match:
+        owner = match.group(1)
+        repo = match.group(2).rstrip(".git")  # Remove ".git" if present
+        return owner, repo
+    return None, None
+
+def fetch_pull_requests(owner, repo, oauth_token):
+    """
+    Fetch all open pull requests for a repository.
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"token {oauth_token.strip()}"
+    }
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        raise Exception(f"GitHub API error: {response.json().get('message')}")
+
+    return [
+        {"number": pr["number"], "title": pr["title"], "user": pr["user"]["login"]}
+        for pr in response.json()
+    ]
+
+import base64
+
+def fetch_full_file_content(owner, repo, file_path, oauth_token):
+    """
+    Fetch the full content of a file in the repository.
+    """
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    headers = {"Authorization": f"token {oauth_token}"}
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 404:
+        # File not found; log the error and return an empty string
+        print(f"File not found: {file_path}")
+        return None
+
+    if response.status_code != 200:
+        raise Exception(f"Error fetching file {file_path}: {response.json().get('message')}")
+
+    file_content = base64.b64decode(response.json()["content"]).decode("utf-8")
+    return file_content
+
+
+def fetch_pull_request_details(owner, repo, pr_number, oauth_token):
+    """
+    Fetch detailed information about a specific pull request, including full file content and diffs.
+    """
+    pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+    headers = {"Authorization": f"token {oauth_token}"}
+    pr_response = requests.get(pr_url, headers=headers)
+
+    if pr_response.status_code != 200:
+        raise Exception(f"GitHub API error: {pr_response.json().get('message')}")
+
+    pr_data = pr_response.json()
+
+    # Fetch diffs
+    files_url = pr_data["url"] + "/files"
+    files_response = requests.get(files_url, headers=headers)
+
+    if files_response.status_code != 200:
+        raise Exception(f"GitHub API error: {files_response.json().get('message')}")
+
+    files_data = files_response.json()
+
+    # Fetch full file content for each modified file
+    for file in files_data:
+        file_path = file["filename"]
+        file["full_content"] = fetch_full_file_content(owner, repo, file_path, oauth_token)
+
+    pr_data["files"] = files_data
+    return pr_data
+
+import re
+
+def extract_referenced_files(file_content):
+    """
+    Parse the file content to extract referenced files (e.g., imports).
+    """
+    # Match common import patterns (Python-specific)
+    matches = re.findall(r"from\s+([a-zA-Z0-9_\.]+)\s+import|import\s+([a-zA-Z0-9_\.]+)", file_content)
+    referenced_files = set(match[0] or match[1] for match in matches if match)
+    return referenced_files
+
+
+
+from langchain_community.llms import OpenAI
+def analyze_code_changes(files, owner, repo, oauth_token):
+    """
+    Analyze code changes using OpenAI, handling large prompts by truncating or summarizing.
+    """
+    openai = OpenAI(api_key=OPEN_AI_KEY)
+    results = []
+
+    for file in files:
+        filename = file["filename"]
+        full_content = file.get("full_content", "")
+        changes = file.get("patch", "")
+
+        if full_content is None:
+            print(f"Skipping {filename} due to missing content.")
+            continue
+
+        # Summarize large files before analysis
+        if len(full_content) > 3500:
+            print(f"Summarizing large file: {filename}")
+            full_content = summarize_large_file(full_content, filename)
+
+        if len(changes) > 500:
+            changes = changes[:500]
+            
+        # Limit tokens by truncating if necessary
+        max_prompt_length = 3500  # Leave space for completion tokens
+        prompt = f"""
+        You are a senior software engineer reviewing the following changes to a file in a repository. 
+        Provide detailed feedback for the developer to improve their code quality and ensure adherence 
+        to best practices.
+
+        File Name: {filename}
+
+        Full File Content:
+        {full_content[:max_prompt_length]}
+
+        Code Changes:
+        {changes[:max_prompt_length - len(full_content)]}
+
+        Review Instructions:
+        1. Analyze the purpose of the changes made in this file.
+        2. Identify potential issues such as bugs, performance bottlenecks, or security vulnerabilities.
+        3. Suggest improvements or refactoring opportunities to make the code more efficient and maintainable.
+        4. Check if the code adheres to standard conventions (e.g., PEP-8 for Python or equivalent for other languages).
+        5. Provide high-level feedback about the overall changes and their impact on the project.
+
+        Be concise and use bullet points for your suggestions.
+        """
+        try:
+            response = openai.generate([prompt], max_tokens=500)  # Adjust for longer responses
+            completion = response.generations[0][0].text.strip()
+            results.append({"file": filename, "analysis": completion})
+        except Exception as e:
+            results.append({"file": filename, "error": str(e)})
+
+
+    return results
+
+
+def summarize_large_file(file_content, filename):
+    """
+    Summarize large file content to stay within OpenAI's context limit.
+    """
+    prompt = f"""
+    You are a senior software engineer reviewing a file that is too large to analyze in full. 
+    Provide a summary that captures the key points and purpose of the file.
+
+    File Name: {filename}
+
+    Full File Content (Truncated):
+    {file_content[:3000]}
+
+    Summarization Instructions:
+    1. Summarize the overall purpose of this file.
+    2. Highlight the main components or sections in the code.
+    3. Identify any patterns, conventions, or structural decisions used in the code.
+    4. Provide any notable observations about the file's structure, logic, or style.
+
+    Be concise and focus on providing a clear overview.
+    """
+    openai = OpenAI(api_key=OPEN_AI_KEY)
+    try:
+        response = openai.generate([prompt])
+        return response.generations[0][0].text.strip()
+    except Exception as e:
+        return f"Error summarizing file: {e}"
+
+

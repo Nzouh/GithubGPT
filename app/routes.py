@@ -18,8 +18,13 @@ def home():
     """
     oauth_token = session.get("oauth_token")
     if oauth_token:
-        return "Logged in. Ready to fetch files! <a href='/fetch-files'>Go to Fetch Files</a>"
-    return '<a href="/login">Login with GitHub</a>'
+        return """
+        <h1>Welcome</h1>
+        <p>Logged in. Ready to fetch files!</p>
+        <a href='/fetch-files'><button>Go to Fetch Files</button></a>
+        <a href='/pull-review'><button>Pull Request Reviews</button></a>
+        """
+    return '<a href="/login"><button>Login with GitHub</button></a>'
 
 @main.route("/login")
 def login():
@@ -37,7 +42,7 @@ def callback():
     try:
         token = get_access_token(code)
         session["oauth_token"] = token
-        return redirect(url_for("main.fetch_files"))  # Redirect to /fetch-files
+        return redirect(url_for("main.home"))  # Redirect to /
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
