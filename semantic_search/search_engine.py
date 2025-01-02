@@ -67,32 +67,55 @@ def parse_python_file(file_path):
         print(f"Error parsing {file_path}: {e}")
         return []
 
-def process_and_index_file(file_path, content, namespace="default"):
+def process_and_index_repository(files, namespace="default"):
     """
-    Process and index the content of a file into Pinecone.
+    Process and index the entire repository structure and individual files into Pinecone.
 
-    :param file_path: Path to the file.
-    :param content: Content of the file.
+    :param files: List of tuples containing (file_path, content).
     :param namespace: Namespace for storing embeddings in Pinecone.
     """
-    if not content.strip():
-        print(f"Skipping empty or invalid file: {file_path}")
-        return
+    try:
+        # Create a document representing the entire repository structure
+        repo_structure = "\n".join([file[0] for file in files])  # Combine all file paths
+        repo_document = Document(page_content=repo_structure, metadata={"type": "repo_structure"})
 
-    # Use RecursiveCharacterTextSplitter to chunk the file content
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_text(content)
+        vector = embeddings.embed_query(repo_structure)
 
-    for i, chunk in enumerate(chunks):
-        chunk_id = f"{file_path}_chunk_{i}"
-        vector = embeddings.embed_query(chunk)
-        metadata = {
-            "file_path": file_path,
-            "chunk_index": i,
-            "content": chunk
-        }
-        index.upsert(vectors=[(chunk_id, vector, metadata)], namespace=namespace)
-        print(f"Indexed chunk {i + 1}/{len(chunks)} from file {file_path}")
+        # Store repository structure in Pinecone
+        repo_vector_id = "repository_structure"
+        index.upsert(vectors=[(repo_vector_id, vector, {"type": "repo_structure", "content": repo_structure})], namespace=namespace)
+        print("Upserted repository structure into Pinecone.")
+
+        # Process and store individual files
+        for file_path, content in files:
+            if not content.strip():
+                print(f"Skipping empty or invalid file: {file_path}")
+                continue
+
+            # Embed and store the file name
+            file_name = os.path.basename(file_path)
+            file_vector = embeddings.embed_query(file_name)
+            index.upsert(vectors=[(file_name, file_vector, {"type": "file_name", "file_name": file_name})], namespace=namespace)
+            print(f"Upserted file name {file_name} into Pinecone.")
+
+            # Process and store file content in chunks
+            splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+            chunks = splitter.split_text(content)
+
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{file_name}_chunk_{i}"
+                chunk_vector = embeddings.embed_query(chunk)
+                metadata = {
+                    "type": "file_content",
+                    "file_name": file_name,
+                    "file_path": file_path,
+                    "content": chunk
+                }
+                index.upsert(vectors=[(chunk_id, chunk_vector, metadata)], namespace=namespace)
+                print(f"Upserted chunk {i + 1}/{len(chunks)} for file {file_name}.")
+
+    except Exception as e:
+        print(f"Error processing repository: {e}")
 
 def search_code(query, namespace="default", top_k=5):
     """
@@ -125,7 +148,6 @@ def combined_query(query, namespace="default", top_k=5):
     :param top_k: Number of top matches to retrieve.
     :return: Combined response from embeddings and search engine.
     """
-    # Retrieve semantic results from indexed files
     query_vector = embeddings.embed_query(query)
 
     print(f"Querying Pinecone in namespace: {namespace}")
@@ -152,12 +174,11 @@ def answer(query, namespace="default", top_k=10):
     :return: AI-generated answer.
     """
     try:
-        combined_results = combined_query(query, namespace=namespace, top_k=top_k)
+        combined_results = combined_query(query, "default", top_k=top_k)
 
         if not combined_results:
             return "No relevant information found in the repository."
 
-        # Prepare retrieved documents for LangChain
         retrieved_docs = [
             Document(page_content=result["content"], metadata=result)
             for result in combined_results
@@ -167,7 +188,6 @@ def answer(query, namespace="default", top_k=10):
         if not retrieved_docs:
             return "No relevant content available for the query."
 
-        # Generate the AI-driven response
         llm = OpenAI(temperature=0, openai_api_key=openai_api_key)
         chain = load_qa_chain(llm, chain_type="stuff")
 
@@ -182,22 +202,22 @@ if __name__ == "__main__":
     directory = "./"  # Path to your repository
     exclude_dirs = {"venv", "__pycache__"}  # Directories to exclude
 
-    for root, dirs, files in os.walk(directory):
+    files = []
+    for root, dirs, files_list in os.walk(directory):
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
-        for file in files:
+        for file in files_list:
             file_path = os.path.join(root, file)
             with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-            process_and_index_file(file_path, content)
+            files.append((file_path, content))
+
+    process_and_index_repository(files)
 
     query = "Where is the function that handles authentication?"
     results = combined_query(query)
     for result in results:
         print(f"Source: {result['source']}\nFile: {result['file_path']}\nContent: {result['content']}\n")
-
-
-
 
 def get_pinecone_index():
     """
@@ -207,7 +227,6 @@ def get_pinecone_index():
     pc = Pinecone(api_key=pinecone_key)
     index_name = "my-pinecone-index"
 
-    # Check if the index exists, create if not
     if index_name not in pc.list_indexes().names():
         pc.create_index(
             name=index_name,
@@ -215,13 +234,15 @@ def get_pinecone_index():
             metric="cosine",
             spec=ServerlessSpec(cloud="aws", region="us-west-2")
         )
+    else:
+        clear_namespace(index, namespace = "default")
 
     return pc.Index(index_name)
 
 def clear_namespace(index, namespace):
     """
     Clear all vectors in a specific namespace.
-    
+
     :param index: Pinecone index instance.
     :param namespace: Namespace to clear.
     """
