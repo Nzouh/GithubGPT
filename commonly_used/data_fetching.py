@@ -14,12 +14,19 @@ def get_repo_tree(owner, repo, branch, oauth_token, recursive=True):
     url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{branch}?recursive={1 if recursive else 0}"
     headers = get_auth_headers(oauth_token)
     response = requests.get(url, headers=headers)
-    
-    if response.status_code == 403:  # Handle rate limit exceeded
-        raise Exception("Rate limit exceeded. Please try again later.")
+
+    if response.status_code == 403:
+        raise Exception("Rate limit exceeded or insufficient permissions. Check your token and scopes.")
+    if response.status_code == 404:
+        raise Exception(f"Branch '{branch}' not found in repository '{owner}/{repo}'. Check the branch name.")
     response.raise_for_status()
+
+    tree = response.json().get("tree", [])
+    if not tree:
+        raise Exception(f"No files found in the repository '{owner}/{repo}' on branch '{branch}'.")
     
-    return response.json().get("tree", [])
+    print(f"Fetched repository tree with {len(tree)} items.")  # Debugging
+    return tree
 
 def get_file_content(owner, repo, file_path, oauth_token):
     """
@@ -28,14 +35,22 @@ def get_file_content(owner, repo, file_path, oauth_token):
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
     headers = get_auth_headers(oauth_token)
     response = requests.get(url, headers=headers)
-    
-    if response.status_code == 403:  # Handle rate limit exceeded
-        raise Exception("Rate limit exceeded. Please try again later.")
+
+    if response.status_code == 403:
+        raise Exception("Rate limit exceeded or insufficient permissions. Check your token and scopes.")
+    if response.status_code == 404:
+        raise Exception(f"File '{file_path}' not found in repository '{owner}/{repo}'. Check the file path.")
     response.raise_for_status()
-    
+
     data = response.json()
     if data.get("encoding") == "base64":
-        return base64.b64decode(data["content"]).decode("utf-8")
+        try:
+            return base64.b64decode(data["content"]).decode("utf-8")
+        except Exception as e:
+            raise Exception(f"Error decoding content for file '{file_path}': {e}")
+    else:
+        print(f"File '{file_path}' does not have Base64 encoding. Skipping.")  # Debugging
+
     return None
 
 def fetch_coding_files(owner, repo, branch, oauth_token, extensions=None):
@@ -50,7 +65,7 @@ def fetch_coding_files(owner, repo, branch, oauth_token, extensions=None):
     :param extensions: List of file extensions to filter, e.g., [".py", ".md"]
     :return: List of tuples containing (file_path, content)
     """
-    extensions = extensions or [".py", ".md", ".txt"]  # Default extensions
+    extensions = extensions or [".py", ".md", ".txt", ".json", ".yaml", ".java", ".js", ".html", ".css"]
     fetched_files = []
 
     try:
@@ -63,36 +78,20 @@ def fetch_coding_files(owner, repo, branch, oauth_token, extensions=None):
 
             # Filter by file type and extension
             if file_type == "blob" and any(file_path.endswith(ext) for ext in extensions):
-                print(f"Fetching content of: {file_path}")
+                print(f"Fetching content of: {file_path}")  # Debugging
                 content = get_file_content(owner, repo, file_path, oauth_token)
                 if content is not None:
-                    # Prepend the file name to the content
-                    marked_content = f"File Name: {file_path}\n\n{content}"
+                    # Prepend the file name and path to the content
+                    marked_content = f"File: {file_path}\n\n{content}"
                     fetched_files.append((file_path, marked_content))
                 else:
-                    print(f"Failed to fetch content for {file_path}")
+                    print(f"Content not fetched or empty for file: {file_path}")
 
+        if not fetched_files:
+            print("No files matching the specified extensions were found.")
+        
         return fetched_files
 
     except Exception as e:
         print(f"Error fetching coding files: {e}")
         return []
-
-# Example usage
-if __name__ == "__main__":
-    oauth_token = "client-oauth-token"  # Replace with your actual GitHub token
-    owner = "client-username"
-    repo = "client-repo"
-    branch = "main"
-
-    # Specify extensions for coding-related files
-    extensions = [".py", ".md", ".json", ".yaml", ".txt"]
-
-    # Fetch coding files
-    coding_files = fetch_coding_files(owner, repo, branch, oauth_token, extensions)
-
-    # Print fetched files and their content
-    for file_path, content in coding_files:
-        print(f"--- {file_path} ---")
-        print(content[:500])  # Print first 500 characters to avoid large outputs
-

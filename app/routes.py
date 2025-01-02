@@ -1,11 +1,15 @@
+import sys
+import os
+GITHUB_REDIRECT_URI = os.environ.get('GITHUB_REDIRECT_URI')
+print(GITHUB_REDIRECT_URI)
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import Blueprint, redirect, request, session, url_for, jsonify
-from common.auth import get_github_auth_url, get_access_token
-from common.data_fetching import fetch_coding_files
+from commonly_used.auth import get_github_auth_url, get_access_token
+from commonly_used.data_fetching import fetch_coding_files
 import re
 from semantic_search.embedding_generator import process_and_store_all
 from semantic_search.embedding_generator import answer
 import tempfile
-import os
 from flask import render_template
 
 
