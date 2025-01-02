@@ -6,12 +6,14 @@ from langchain_community.vectorstores import Pinecone
 from pinecone import Pinecone, ServerlessSpec
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.schema import Document
+from langchain_openai import OpenAI
 from langchain.chains.question_answering import load_qa_chain
 
 # Initialize Pinecone
 pinecone_key = os.getenv("PINECONE_KEY")
 pc = Pinecone(api_key=pinecone_key)
 index_name = "my-pinecone-index"
+index_host = os.getenv("PINECONE_INDEX_HOST")
 
 # Check if the index exists, create if not
 if index_name not in pc.list_indexes().names():
@@ -65,39 +67,41 @@ def parse_python_file(file_path):
         print(f"Error parsing {file_path}: {e}")
         return []
 
-def index_code_blocks(file_path, namespace="code_blocks"):
+def process_and_index_file(file_path, content, namespace="default"):
     """
-    Index code blocks (functions and classes) from a Python file into Pinecone.
+    Process and index the content of a file into Pinecone.
 
-    :param file_path: Path to the Python file.
-    :param namespace: Pinecone namespace for storing embeddings.
+    :param file_path: Path to the file.
+    :param content: Content of the file.
+    :param namespace: Namespace for storing embeddings in Pinecone.
     """
-    parsed_blocks = parse_python_file(file_path)
-    if not parsed_blocks:
-        print(f"Skipping {file_path}: No valid Python code detected.")
+    if not content.strip():
+        print(f"Skipping empty or invalid file: {file_path}")
         return
 
-    for block in parsed_blocks:
-        vector = embeddings.embed_query(block["content"])
+    # Use RecursiveCharacterTextSplitter to chunk the file content
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitter.split_text(content)
+
+    for i, chunk in enumerate(chunks):
+        chunk_id = f"{file_path}_chunk_{i}"
+        vector = embeddings.embed_query(chunk)
         metadata = {
             "file_path": file_path,
-            "block_name": block["name"],
-            "type": block["type"],
-            "start_line": block["start_line"],
-            "end_line": block["end_line"],
-            "content": block["content"]
+            "chunk_index": i,
+            "content": chunk
         }
-        index.upsert(vectors=[(f"{file_path}:{block['name']}", vector, metadata)], namespace=namespace)
-        print(f"Indexed {block['type']} '{block['name']}' from {file_path}")
+        index.upsert(vectors=[(chunk_id, vector, metadata)], namespace=namespace)
+        print(f"Indexed chunk {i + 1}/{len(chunks)} from file {file_path}")
 
-def search_code(query, namespace="code_blocks", top_k=5):
+def search_code(query, namespace="default", top_k=5):
     """
-    Search for code blocks matching a query.
+    Search for file chunks matching a query.
 
     :param query: The search query.
     :param namespace: Pinecone namespace for retrieving embeddings.
     :param top_k: Number of top matches to retrieve.
-    :return: List of matching code blocks with metadata.
+    :return: List of matching chunks with metadata.
     """
     query_vector = embeddings.embed_query(query)
     results = index.query(vector=query_vector, top_k=top_k, include_metadata=True, namespace=namespace)
@@ -107,24 +111,21 @@ def search_code(query, namespace="code_blocks", top_k=5):
         metadata = match["metadata"]
         matches.append({
             "file_path": metadata["file_path"],
-            "block_name": metadata["block_name"],
-            "type": metadata["type"],
-            "start_line": metadata["start_line"],
-            "end_line": metadata["end_line"],
+            "chunk_index": metadata.get("chunk_index"),
             "content": metadata.get("content")
         })
     return matches
 
 def combined_query(query, namespace="default", top_k=5):
     """
-    Combine results from embedding generator and search engine.
+    Combine results from all indexed files and search engine.
 
     :param query: The query string.
-    :param namespace: Namespace in Pinecone.
+    :param namespace: Namespace for embeddings.
     :param top_k: Number of top matches to retrieve.
-    :return: Combined response from embedding generator and search engine.
+    :return: Combined response from embeddings and search engine.
     """
-    # Retrieve semantic results from embedding generator
+    # Retrieve semantic results from indexed files
     query_vector = embeddings.embed_query(query)
 
     print(f"Querying Pinecone in namespace: {namespace}")
@@ -139,42 +140,94 @@ def combined_query(query, namespace="default", top_k=5):
         for result in embedding_results.get("matches", [])
     ]
 
-    # Retrieve detailed results from search engine
-    search_engine_matches = search_code(query, namespace="code_blocks", top_k=top_k)
+    return embedding_matches
 
-    # Combine results
-    combined_results = embedding_matches + [
-        {
-            "file_path": match["file_path"],
-            "block_name": match["block_name"],
-            "type": match["type"],
-            "start_line": match["start_line"],
-            "end_line": match["end_line"],
-            "content": match["content"],
-            "source": "search_engine"
-        }
-        for match in search_engine_matches
-    ]
+def answer(query, namespace="default", top_k=10):
+    """
+    Retrieve relevant embeddings from Pinecone and generate an AI-driven answer.
 
-    return combined_results
+    :param query: The query string to answer.
+    :param namespace: Namespace for embeddings.
+    :param top_k: Number of top matches to retrieve.
+    :return: AI-generated answer.
+    """
+    try:
+        combined_results = combined_query(query, namespace=namespace, top_k=top_k)
+
+        if not combined_results:
+            return "No relevant information found in the repository."
+
+        # Prepare retrieved documents for LangChain
+        retrieved_docs = [
+            Document(page_content=result["content"], metadata=result)
+            for result in combined_results
+            if result.get("content")
+        ]
+
+        if not retrieved_docs:
+            return "No relevant content available for the query."
+
+        # Generate the AI-driven response
+        llm = OpenAI(temperature=0, openai_api_key=openai_api_key)
+        chain = load_qa_chain(llm, chain_type="stuff")
+
+        response = chain.invoke({"input_documents": retrieved_docs, "question": query})
+        return response["output_text"]
+
+    except Exception as e:
+        print(f"Error generating answer: {e}")
+        return "Error occurred while processing the query."
 
 if __name__ == "__main__":
     directory = "./"  # Path to your repository
     exclude_dirs = {"venv", "__pycache__"}  # Directories to exclude
 
     for root, dirs, files in os.walk(directory):
-        # Modify dirs in-place to skip excluded directories
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
 
         for file in files:
-            if not file.endswith(".py"):
-                print(f"Skipping non-Python file: {file}")
-                continue
-
             file_path = os.path.join(root, file)
-            index_code_blocks(file_path)
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            process_and_index_file(file_path, content)
 
     query = "Where is the function that handles authentication?"
     results = combined_query(query)
     for result in results:
         print(f"Source: {result['source']}\nFile: {result['file_path']}\nContent: {result['content']}\n")
+
+
+
+
+def get_pinecone_index():
+    """
+    Initialize and return the Pinecone index.
+    """
+    pinecone_key = os.getenv("PINECONE_KEY")
+    pc = Pinecone(api_key=pinecone_key)
+    index_name = "my-pinecone-index"
+
+    # Check if the index exists, create if not
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=1536,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-west-2")
+        )
+
+    return pc.Index(index_name)
+
+def clear_namespace(index, namespace):
+    """
+    Clear all vectors in a specific namespace.
+    
+    :param index: Pinecone index instance.
+    :param namespace: Namespace to clear.
+    """
+    try:
+        index = pc.Index(host=index_host)
+        index.delete(delete_all=True, namespace=namespace)
+        print(f"Cleared existing data in namespace: {namespace}")
+    except Exception as e:
+        print(f"Error clearing namespace '{namespace}': {e}")

@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import Blueprint, redirect, request, session, url_for, jsonify
 from commonly_used.auth import get_github_auth_url, get_access_token
 from commonly_used.data_fetching import fetch_coding_files
-from semantic_search.search_engine import combined_query  # Import from search_engine.py
+from semantic_search.search_engine import process_and_index_file, answer, clear_namespace, get_pinecone_index  # Import functions from search_engine.py
 import tempfile
 from flask import render_template
 
@@ -57,19 +57,30 @@ def fetch_files():
         if not owner or not repo:
             return render_template("error.html", message="Owner and repository name are required.")
 
+        # Generate a unique namespace for the repository
+        namespace = f"{owner}_{repo}"
+
         try:
+            # Initialize Pinecone index
+            index = get_pinecone_index()
+
+            # Clear the namespace to avoid conflicts
+            clear_namespace(index, namespace)
+
             # Fetch files from GitHub
             files = fetch_coding_files(owner, repo, branch, oauth_token, extensions)
 
             # Process and store all files using search_engine indexing
             for file_path, content in files:
-                search_engine.index_code_blocks(file_path)
+                if content.strip():  # Skip empty files
+                    process_and_index_file(file_path, content, namespace=namespace)
 
             return render_template("query.html", message="Files processed successfully. You can now query!")
         except Exception as e:
             return render_template("error.html", message=f"Error processing files: {e}")
 
     return render_template("fetch_files.html")
+
 
 def parse_github_url(url):
     """
@@ -92,18 +103,18 @@ def query():
     """
     if request.method == "POST":
         query_text = request.form.get("query")
-        namespace = request.form.get("namespace", "default")
+        namespace = request.form.get("namespace", "default")  # Use the provided namespace
         top_k = int(request.form.get("top_k", 5))
 
         if not query_text:
             return render_template("error.html", message="Query is required.")
 
         try:
-            # Use combined_query from search_engine.py
-            response = combined_query(query_text, namespace=namespace, top_k=top_k)
+            # Use the answer function to get AI-driven responses
+            response = answer(query_text, namespace=namespace, top_k=top_k)
             if not response:
                 return render_template("query_results.html", query=query_text, response="No relevant results found.")
-            
+
             return render_template("query_results.html", query=query_text, response=response)
         except Exception as e:
             print(f"Error querying embeddings: {e}")
