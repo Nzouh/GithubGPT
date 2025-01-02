@@ -6,15 +6,9 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from flask import Blueprint, redirect, request, session, url_for, jsonify
 from commonly_used.auth import get_github_auth_url, get_access_token
 from commonly_used.data_fetching import fetch_coding_files
-import re
-from semantic_search.embedding_generator import process_and_store_all
-from semantic_search.embedding_generator import answer
+from semantic_search.search_engine import combined_query  # Import from search_engine.py
 import tempfile
 from flask import render_template
-
-
-
-
 
 main = Blueprint("main", __name__)
 
@@ -48,8 +42,6 @@ def callback():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-
-
 @main.route("/fetch-files", methods=["GET", "POST"])
 def fetch_files():
     oauth_token = session.get("oauth_token")
@@ -69,17 +61,15 @@ def fetch_files():
             # Fetch files from GitHub
             files = fetch_coding_files(owner, repo, branch, oauth_token, extensions)
 
-            # Process and store all files
-            process_and_store_all(files)
+            # Process and store all files using search_engine indexing
+            for file_path, content in files:
+                search_engine.index_code_blocks(file_path)
 
             return render_template("query.html", message="Files processed successfully. You can now query!")
         except Exception as e:
             return render_template("error.html", message=f"Error processing files: {e}")
 
     return render_template("fetch_files.html")
-
-
-
 
 def parse_github_url(url):
     """
@@ -97,15 +87,23 @@ def parse_github_url(url):
 
 @main.route("/query", methods=["GET", "POST"])
 def query():
+    """
+    Query the indexed files and code blocks.
+    """
     if request.method == "POST":
         query_text = request.form.get("query")
         namespace = request.form.get("namespace", "default")
+        top_k = int(request.form.get("top_k", 5))
 
         if not query_text:
             return render_template("error.html", message="Query is required.")
 
         try:
-            response = answer(query_text, namespace)
+            # Use combined_query from search_engine.py
+            response = combined_query(query_text, namespace=namespace, top_k=top_k)
+            if not response:
+                return render_template("query_results.html", query=query_text, response="No relevant results found.")
+            
             return render_template("query_results.html", query=query_text, response=response)
         except Exception as e:
             print(f"Error querying embeddings: {e}")
