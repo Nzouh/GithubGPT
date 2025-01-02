@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fetch Files</title>
+</head>
+<body>
+    <h1>Fetch and Process Files</h1>
+    <form method="POST">
+        <label for="owner">Repository Owner:</label>
+        <input type="text" id="owner" name="owner" required><br>
+        <label for="repo">Repository Name:</label>
+        <input type="text" id="repo" name="repo" required><br>
+        <label for="branch">Branch Name:</label>
+        <input type="text" id="branch" name="branch" value="main"><br>
+        <label for="extensions">File Extensions:</label>
+        <input type="text" id="extensions" name="extensions" value=".py,.md,.txt"><br>
+        <button type="submit">Fetch and Process Files</button>
+    </form>
+</body>
+</html>

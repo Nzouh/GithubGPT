@@ -1,4 +1,6 @@
-from langchain_openai import OpenAI, OpenAIEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.llms import OpenAI
+
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader
 from langchain.schema import Document
@@ -13,7 +15,7 @@ if not os.getenv("PINECONE_KEY") or not os.getenv("PINECONE_INDEX_HOST") or not 
 
 # Set API keys
 pinecone_key = os.getenv("PINECONE_KEY")
-index_host = os.getenv("PINECONE_INDEX_HOST")
+index_host = os.getenv("PINECONE_INDEX_HOST").rstrip("/").strip()
 openai_api_key = os.getenv("OPEN_AI_KEY")
 
 # Initialize Pinecone client
@@ -33,79 +35,88 @@ def load_document(file):
         print(f"Error loading document: {e}")
         return ""
 
-# Function to process and store documents
-def process_and_store(file, namespace="default"):
-    data = load_document(file)
-    if not data.strip():
-        print("File content is empty or invalid.")
-        return
+def process_and_store_all(files, namespace="default"):
+    """
+    Process and store embeddings for all files in the namespace, avoiding duplication.
 
-    document = Document(page_content=data, metadata={"file_name": file})
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    chunks = splitter.split_documents([document])
+    :param files: List of tuples containing (file_path, content).
+    :param namespace: Namespace in Pinecone for storing embeddings.
+    """
+    try:
+        # Get existing file names from Pinecone metadata
+        existing_files = set()
+        index_stats = index.describe_index_stats(namespace=namespace)
+        for vector_id, vector_metadata in index_stats.get("namespaces", {}).get(namespace, {}).get("vectors", {}).items():
+            if "file_name" in vector_metadata.get("metadata", {}):
+                existing_files.add(vector_metadata["metadata"]["file_name"])
 
-    print(f"Processing file: {file}")
-    print(f"Number of chunks created: {len(chunks)}")
+        # Process files
+        for file_path, content in files:
+            if not content.strip():
+                print(f"Skipping empty or invalid file: {file_path}")
+                continue
 
-    if not chunks:
-        print("No chunks were created. Ensure the file has sufficient content.")
-        return
+            # Check if embeddings for the file already exist in Pinecone
+            if file_path in existing_files:
+                print(f"Embeddings already exist for file: {file_path}. Skipping.")
+                continue
 
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=openai_api_key)
+            # Process and store new embeddings
+            document = Document(page_content=content, metadata={"file_name": file_path})
+            splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+            chunks = splitter.split_documents([document])
 
-    for i, chunk in enumerate(chunks):
-        chunk_id = f"{file}_chunk_{i}"
-        vector = embeddings.embed_query(chunk.page_content)
-        metadata = {"file_name": file, "content": chunk.page_content}
+            print(f"Processing file: {file_path}")
+            print(f"Number of chunks created: {len(chunks)}")
 
-        index.upsert(vectors=[(chunk_id, vector, metadata)], namespace=namespace)
-        print(f"Upserted chunk {i + 1}/{len(chunks)}")
+            if not chunks:
+                print(f"No chunks created for {file_path}. Skipping.")
+                continue
 
-# Function to search and answer a query
-def answer(file, query, namespace="default"):
-    process_and_store(file, namespace)
+            embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=openai_api_key)
 
+            for i, chunk in enumerate(chunks):
+                chunk_id = f"{file_path}_chunk_{i}"
+                vector = embeddings.embed_query(chunk.page_content)
+                metadata = {"file_name": file_path, "content": chunk.page_content}
+
+                # Store in Pinecone
+                index.upsert(vectors=[(chunk_id, vector, metadata)], namespace=namespace)
+                print(f"Upserted chunk {i + 1}/{len(chunks)} into Pinecone.")
+
+    except Exception as e:
+        print(f"Error processing files: {e}")
+
+
+
+
+def answer(query, namespace="default"):
+    """
+    Retrieve relevant embeddings from Pinecone and answer the query.
+
+    :param query: The query string to answer.
+    :param namespace: Namespace in Pinecone for retrieving embeddings.
+    :return: AI-generated answer.
+    """
     embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=openai_api_key)
     query_vector = embeddings.embed_query(query)
 
+    print(f"Querying Pinecone in namespace: {namespace}")
     search_results = index.query(vector=query_vector, top_k=5, include_metadata=True, namespace=namespace)
+
+    print("Pinecone Query Results:", search_results)
+
+    if not search_results or not search_results.get("matches"):
+        return "No relevant information found in the repository."
 
     retrieved_docs = [
         Document(page_content=result["metadata"]["content"], metadata={"file_name": result["metadata"]["file_name"]})
         for result in search_results["matches"]
     ]
 
-    # Log the content of the retrieved chunks
-    print("Retrieved Chunks Content:", [doc.page_content for doc in retrieved_docs])
-
     llm = OpenAI(temperature=0, openai_api_key=openai_api_key)
     chain = load_qa_chain(llm, chain_type="stuff")
 
     response = chain.invoke({"input_documents": retrieved_docs, "question": query})
-    print("Answer:", response["output_text"])
-
-# Function to clear old entries in Pinecone
-def clear_vectors_by_pattern(file_name, namespace="default"):
-    try:
-        results = index.query(
-            filter={"file_name": file_name},
-            top_k=1000,
-            include_metadata=True,
-            namespace=namespace,
-        )
-        vector_ids = [match["id"] for match in results["matches"]]
-        if vector_ids:
-            index.delete(ids=vector_ids, namespace=namespace)
-            print(f"Deleted {len(vector_ids)} vectors for file: {file_name}")
-        else:
-            print(f"No vectors found for file: {file_name}")
-    except Exception as e:
-        print(f"Error clearing vectors: {e}")
-
-# Example usage
-if __name__ == "__main__":
-    file_path = "C:\\Users\\nabil\\Downloads\\GithubGPT\\semantic_search\\test.txt"
-    query = "How would you define what data science is? I want you to base yourself only on the provided context"
-
-    print("File size:", os.path.getsize(file_path))
-    answer(file_path, query)
+    print("Generated Answer:", response["output_text"])
+    return response["output_text"]

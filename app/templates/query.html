@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Query</title>
+</head>
+<body>
+    <h1>Ask a Query</h1>
+    {% if message %}
+        <p style="color: green;">{{ message }}</p>
+    {% endif %}
+    <form method="POST" action="/query">
+        <label for="query">Your Query:</label>
+        <textarea id="query" name="query" required></textarea><br>
+        <label for="namespace">Namespace:</label>
+        <input type="text" id="namespace" name="namespace" value="default"><br>
+        <button type="submit">Search</button>
+    </form>
+</body>
+</html>

@@ -66,7 +66,9 @@ def fetch_coding_files(owner, repo, branch, oauth_token, extensions=None):
                 print(f"Fetching content of: {file_path}")
                 content = get_file_content(owner, repo, file_path, oauth_token)
                 if content is not None:
-                    fetched_files.append((file_path, content))
+                    # Prepend the file name to the content
+                    marked_content = f"File Name: {file_path}\n\n{content}"
+                    fetched_files.append((file_path, marked_content))
                 else:
                     print(f"Failed to fetch content for {file_path}")
 
@@ -93,3 +95,4 @@ if __name__ == "__main__":
     for file_path, content in coding_files:
         print(f"--- {file_path} ---")
         print(content[:500])  # Print first 500 characters to avoid large outputs
+
