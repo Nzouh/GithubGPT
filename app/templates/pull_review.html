@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Pull Request Analyzer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <style>
+        .chat-box {
+            height: 80vh;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 15px;
+            background: #f9f9f9;
+        }
+        .input-group {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <div class="row">
+            <!-- Left Column: Pull Request Analysis -->
+            <div class="col-md-8">
+                <h1 class="text-center mb-4">GitHub Pull Request Analyzer</h1>
+
+                <!-- Step 1: Input Repository URL -->
+                <form method="POST" class="mb-4 p-3 border rounded bg-white shadow-sm">
+                    <div class="mb-3">
+                        <label for="repo_url" class="form-label">GitHub Repository URL:</label>
+                        <input type="url" id="repo_url" name="repo_url" class="form-control" placeholder="https://github.com/user/repo" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Analyze</button>
+                </form>
+
+                <!-- Step 2: Select Pull Request -->
+                {% if pull_requests %}
+                <div class="mb-4 p-3 border rounded bg-white shadow-sm">
+                    <h2>Select a Pull Request</h2>
+                    <form method="POST">
+                        <input type="hidden" name="repo_url" value="{{ repo_url }}">
+                        <div class="mb-3">
+                            <label for="pr_number" class="form-label">Pull Requests:</label>
+                            <select name="pr_number" id="pr_number" class="form-select">
+                                {% for pr in pull_requests %}
+                                <option value="{{ pr.number }}">{{ pr.title }} by {{ pr.user }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">View Details</button>
+                    </form>
+                </div>
+                {% endif %}
+
+                <!-- Step 3: Display Pull Request Details -->
+                {% if pr_details %}
+                <div class="mb-4 p-3 border rounded bg-white shadow-sm">
+                    <h2>Pull Request Details</h2>
+                    <p><strong>Title:</strong> {{ pr_details.title }}</p>
+                    <p><strong>Author:</strong> {{ pr_details.user.login }}</p>
+                    <p><strong>Created At:</strong> {{ pr_details.created_at }}</p>
+                    <p><strong>Status:</strong> {{ pr_details.state }}</p>
+                    <p><strong>Number of Comments:</strong> {{ pr_details.comments }}</p>
+                    <h3>Description:</h3>
+                    <p>{{ pr_details.body }}</p>
+                </div>
+
+                <!-- Step 4: Analysis Results -->
+                {% if analysis_results %}
+                <div class="mb-4 p-3 border rounded bg-white shadow-sm">
+                    <h3>Analysis Results</h3>
+                    <ul class="list-group">
+                        {% for result in analysis_results %}
+                        <li class="list-group-item">
+                            <strong>{{ result.file }}</strong>: 
+                            {% if result.analysis %}
+                            <p class="text-success">{{ result.analysis }}</p>
+                            {% else %}
+                            <p class="text-danger">Error: {{ result.error }}</p>
+                            {% endif %}
+                            <!-- Add a button to view detailed file changes -->
+                            <button class="btn btn-link view-details" data-file="{{ result.file }}">View Details</button>
+                        </li>
+                        {% endfor %}
+                    </ul>
+                </div>                
+                {% endif %}
+                {% endif %}
+            </div>
+
+            <!-- Right Column: Chatbot -->
+            <div class="col-md-4">
+                <h2 class="text-center">Chatbot</h2>
+                <div id="chat-box" class="chat-box"></div>
+                <form id="chat-form">
+                    <div class="input-group">
+                        <input type="text" id="user-input" class="form-control" placeholder="Ask a question..." required>
+                        <button type="submit" class="btn btn-primary">Send</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        $(document).ready(function () {
+            $('#chat-form').on('submit', function (e) {
+                e.preventDefault();
+                const userInput = $('#user-input').val();
+                $('#chat-box').append(`<div><strong>You:</strong> ${userInput}</div>`);
+
+                $.ajax({
+                    url: "/pull-review/query",
+                    method: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({ query: userInput }),
+                    success: function (response) {
+                        $('#chat-box').append(`<div><strong>Bot:</strong> ${response.response}</div>`);
+                    },
+                    error: function () {
+                        $('#chat-box').append(`<div><strong>Error:</strong> Something went wrong.</div>`);
+                    }
+                });
+
+                $('#user-input').val('');
+            });
+        });
+    </script>
+</body>
+</html>

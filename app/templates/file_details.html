@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Details</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+</head>
+<body class="bg-light">
+    <div class="container mt-5">
+        <h1 class="text-center mb-4">File Details</h1>
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h2>{{ file_name }}</h2>
+            </div>
+            <div class="card-body">
+                <h3>File Changes</h3>
+                <pre class="bg-light p-3 border rounded" style="max-height: 500px; overflow-y: auto;">
+{{ file_diff }}
+                </pre>
+            </div>
+        </div>
+        <div class="text-center mt-4">
+            <a href="/pull-review" class="btn btn-secondary">Back to Pull Review</a>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

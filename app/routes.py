@@ -14,12 +14,18 @@ main = Blueprint("main", __name__)
 @main.route("/")
 def home():
     """
-    Home page to check login status.
+    Home page with a modern login button and additional options for logged-in users.
     """
     oauth_token = session.get("oauth_token")
     if oauth_token:
-        return "Logged in. Ready to fetch files! <a href='/fetch-files'>Go to Fetch Files</a>"
-    return '<a href="/login">Login with GitHub</a>'
+        return render_template(
+            "index.html",
+            message="Welcome back! Choose an action below.",
+            logged_in=True
+        )
+    return render_template("index.html", message="Log in with GitHub to get started.", logged_in=False)
+
+
 
 @main.route("/login")
 def login():
@@ -37,7 +43,7 @@ def callback():
     try:
         token = get_access_token(code)
         session["oauth_token"] = token
-        return redirect(url_for("main.fetch_files"))  # Redirect to /fetch-files
+        return redirect(url_for("main.home"))  # Redirect to /
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
@@ -84,22 +90,26 @@ def query():
     Query the indexed files and code blocks.
     """
     if request.method == "POST":
-        query_text = request.form.get("query")
-        namespace = "default"  # Use default namespace
-        top_k = int(request.form.get("top_k", 5))
-
-        if not query_text:
-            return render_template("error.html", message="Query is required.")
-
         try:
+            # Adjust for AJAX JSON data
+            data = request.get_json()  # Get JSON data from the request
+            query_text = data.get("query")
+            namespace = data.get("namespace", "default")  # Default namespace
+            top_k = int(data.get("top_k", 5))  # Default top_k to 5 if not provided
+
+            if not query_text:
+                return {"result": "Query is required."}, 400
+
             # Use the answer function to get AI-driven responses
             response = answer(query_text, namespace=namespace, top_k=top_k)
             if not response:
-                return render_template("query_results.html", query=query_text, response="No relevant results found.")
+                return {"result": "No relevant results found."}, 200
 
-            return render_template("query_results.html", query=query_text, response=response)
+            return {"result": response}, 200
+
         except Exception as e:
             print(f"Error querying embeddings: {e}")
-            return render_template("error.html", message=f"Error querying embeddings: {e}")
+            return {"result": f"Error querying embeddings: {e}"}, 500
 
+    # Render the query form for GET requests
     return render_template("query.html")
