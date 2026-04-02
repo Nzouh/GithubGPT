@@ -211,3 +211,10 @@ GithubGPT/
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `GITHUB_REDIRECT_URI` | OAuth callback URL registered in your GitHub OAuth App |
 
+
+---
+
+## Demo
+
+- [Demo Video 1](https://drive.google.com/file/d/1GkRccFhDTM1gNz62NPMV6zsVVIrXURWA/view?usp=sharing)
+- [Demo Video 2](https://drive.google.com/file/d/17x2yn3FDpsZHd5UBgyONB0KZuQhyTg3Y/view?usp=sharing)

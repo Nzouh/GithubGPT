@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pull Review Chat</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="container mt-5">
+        <h2 class="text-center">Pull Review Chat</h2>
+        <div id="chat-box" class="border p-3 mb-3" style="height: 300px; overflow-y: auto;"></div>
+        <form id="chat-form">
+            <div class="input-group">
+                <input type="text" id="user-input" class="form-control" placeholder="Ask a question..." required>
+                <button type="submit" class="btn btn-primary">Send</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        $(document).ready(function () {
+            $('#chat-form').on('submit', function (e) {
+                e.preventDefault();
+                const userInput = $('#user-input').val();
+                $('#chat-box').append(`<div><strong>You:</strong> ${userInput}</div>`);
+
+                $.ajax({
+                    url: "/pull-review/query",
+                    method: "POST",
+                    contentType: "application/json",
+                    data: JSON.stringify({ query: userInput }),
+                    success: function (response) {
+                        $('#chat-box').append(`<div><strong>Bot:</strong> ${response.response}</div>`);
+                    },
+                    error: function () {
+                        $('#chat-box').append(`<div><strong>Error:</strong> Something went wrong.</div>`);
+                    }
+                });
+
+                $('#user-input').val('');
+            });
+        });
+    </script>
+</body>
+</html>
